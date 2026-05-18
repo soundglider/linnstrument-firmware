@@ -314,6 +314,15 @@ void applyPresetSettings() {
 
   updateSplitMidiChannels(LEFT);
   updateSplitMidiChannels(RIGHT);
+
+  // chord-engine: sync runtime state from persisted Global. Runs both at
+  // boot (after loadSettings) and on preset switch. The earlier
+  // setDisplayMode(displayNormal) call in setup() painted with the default
+  // tonic; repaint here so the loaded tonic's highlight shows up.
+  chord_engine_state.current_tonic_pc = Global.chord_current_tonic_pc;
+  chord_engine_state.voicing_mode     = Global.chord_voicing_mode;
+  chord_engine_state.voice_spread     = Global.chord_voice_spread;
+  tonic_strip_repaint();
 }
 
 void applyConfiguration() {
@@ -346,7 +355,7 @@ void storeSettingsToPreset(byte p) {
 // The first time after new code is loaded into the Linnstrument, this sets the initial defaults of all settings.
 // On subsequent startups, these values are overwritten by loading the settings stored in flash.
 void initializeDeviceSettings() {
-  Device.version = 17;
+  Device.version = 21;  // bumped from 20: GlobalSettings gained chord_voice_spread
   Device.serialMode = false;
   Device.sleepAnimationActive = false;
   Device.sleepActive = false;
@@ -545,7 +554,8 @@ void initializeMidiSettings(byte split, PresetSettings& p) {
 }
 
 void initializePresetSettings() {
-  Global.splitActive = false;
+  // chord-engine default: split active so left = chord grid, right = tonic strip
+  Global.splitActive = true;
 
   for (byte n = 0; n < NUMPRESETS; ++n) {
     presetBlinkStart[n] = 0;
@@ -612,6 +622,10 @@ void initializePresetSettings() {
 
     g.sustainBehavior = sustainHold;
 
+    g.chord_current_tonic_pc = 0;  // chord-engine: default tonic C
+    g.chord_voicing_mode = 0;      // chord-engine: default close-position voicing
+    g.chord_voice_spread = 0;      // chord-engine: default tight voice spacing
+
     // initialize all identical values in the keyboard split data
     for (byte s = 0; s < NUMSPLITS; ++s) {
         p.split[s].sendX = true;
@@ -650,7 +664,16 @@ void initializePresetSettings() {
         p.split[s].strum = false;
 
         p.split[s].sequencer = false;
+
+        // chord-engine: default off; per-split overrides below set LEFT chord mode
+        // and RIGHT tonic strip to on.
+        p.split[s].chordMode = false;
+        p.split[s].chordTonicStrip = false;
     }
+
+    // chord-engine default layout: LEFT split = chord grid, RIGHT split = tonic strip
+    p.split[LEFT].chordMode = true;
+    p.split[RIGHT].chordTonicStrip = true;
 
     // initialize values that differ between the keyboard splits
     initializeMidiSettings(LEFT, p);
@@ -1216,7 +1239,7 @@ void handlePerSplitSettingNewTouch() {
   sensorCell->lastTouch = millis();
 
   switch (sensorCol) {
-    // MIDI mode settings
+    // MIDI mode settings + chord-engine toggles (rows 1, 2)
     case 1:
       switch (sensorRow) {
         case 7:
@@ -1232,6 +1255,16 @@ void handlePerSplitSettingNewTouch() {
             Split[Global.currentPerSplit].midiChanPerRowReversed = false;
           }
           updateSplitMidiChannels(Global.currentPerSplit);
+          break;
+        case 2:
+          Split[Global.currentPerSplit].chordTonicStrip = !Split[Global.currentPerSplit].chordTonicStrip;
+          updateDisplay();
+          break;
+        case 1:
+          Split[Global.currentPerSplit].chordMode = !Split[Global.currentPerSplit].chordMode;
+          // Drop any currently-sounding chord so toggling off mid-hold doesn't leak notes.
+          chordEngineReleaseHeldChord();
+          updateDisplay();
           break;
       }
       break;
@@ -1326,7 +1359,9 @@ void handlePerSplitSettingNewTouch() {
       }
       break;
 
-    // Timbre/Y settings
+    // Timbre/Y settings + chord-engine toggles (rows 1, 2) — these are the
+    // "repeat after 8 cols" duplicates of the col 1 toggles for ergonomic
+    // access from the right hand.
     case 9:
       switch (sensorRow) {
         case 7:
@@ -1340,6 +1375,16 @@ void handlePerSplitSettingNewTouch() {
           break;
         case 4:
           // handled in hold and release
+          break;
+        case 2:
+          Split[Global.currentPerSplit].chordTonicStrip = !Split[Global.currentPerSplit].chordTonicStrip;
+          updateDisplay();
+          break;
+        case 1:
+          Split[Global.currentPerSplit].chordMode = !Split[Global.currentPerSplit].chordMode;
+          // Drop any currently-sounding chord so toggling off mid-hold doesn't leak notes.
+          chordEngineReleaseHeldChord();
+          updateDisplay();
           break;
       }
       break;

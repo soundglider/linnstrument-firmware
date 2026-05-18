@@ -390,10 +390,19 @@ void paintNormalDisplay() {
     divider = Global.splitPoint;
   }
 
+  // Stock per-cell paint across the whole surface first — note-lights,
+  // faders, etc., based on the user's per-split settings. The chord-engine
+  // zones (chord grid + tonic strip) will be overpainted below; only the
+  // melody zone keeps the stock note-light paint.
   paintNormalDisplaySplit(split, 1, divider);
   if (divider != NUMCOLS) {
     paintNormalDisplaySplit(RIGHT, divider, NUMCOLS);
   }
+
+  // chord-mode overpaint: our function colors and tonic highlight win over
+  // whatever stock painted in those cells.
+  chord_grid_repaint();
+  tonic_strip_repaint();
 
   paintOctaveTransposeLed();
 }
@@ -795,6 +804,20 @@ void paintPerSplitDisplay(byte side) {
 
   // set "show split" led
   paintShowSplitSelection(side);
+
+  // chord-engine per-split toggles. Appear at col 1 and col 9 (both halves of
+  // the surface) so they're reachable from either hand.
+  //   row 1: chord mode (cols 1..8 become the chord grid)
+  //   row 2: tonic strip (cols 9..16 rows 0..1 become the tonic selector)
+  byte engineColor = Split[side].colorMain;
+  if (Split[side].chordMode) {
+    setLed(1, 1, engineColor, cellOn);
+    setLed(9, 1, engineColor, cellOn);
+  }
+  if (Split[side].chordTonicStrip) {
+    setLed(1, 2, engineColor, cellOn);
+    setLed(9, 2, engineColor, cellOn);
+  }
 }
 
 byte getMpeColor(byte side) {

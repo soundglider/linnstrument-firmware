@@ -418,6 +418,13 @@ boolean handleNewTouch() {
 
   cellTouched(touchedCell);                                 // mark this cell as touched
 
+  // chord-mode dispatch (ls_chord_engine.ino) — replaces stock note resolution
+  // for playable cols 1..16. Returns false for col 0 so the command-column
+  // logic below still runs.
+  if (handleNewTouch_zoneDispatch(sensorCol, sensorRow, sensorCell->velocityZ)) {
+    return true;
+  }
+
   // if it's a command button, handle it
   if (sensorCol == 0) {
     if (controlModeActive) {
@@ -873,8 +880,13 @@ boolean handleXYZupdate() {
         }
       }
 
-      // if the note number is outside of MIDI range, don't start it
-      if (notenum >= 0 && notenum <= 127) {
+      // chord-mode: skip stock note resolution for our chord-engine zones
+      // (chord grid + tonic strip) in normal play mode only. In any other
+      // displayMode (settings / calibration / etc.) stock always handles
+      // the note, so the user can use the surface for menu interactions.
+      bool ce_suppress = (displayMode == displayNormal)
+                       && isChordEngineZone(sensorCol, sensorRow);
+      if (notenum >= 0 && notenum <= 127 && !ce_suppress) {
         prepareNewNote(notenum);
       }
     }
@@ -1034,7 +1046,11 @@ boolean handleXYZupdate() {
       }
 
       // send the note on if this in a newly calculated velocity
-      if (newVelocity) {
+      // chord-mode: skip stock sendNewNote for our chord-engine zones in
+      // normal play mode only; other display modes fall through to stock.
+      bool ce_suppress_send = (displayMode == displayNormal)
+                            && isChordEngineZone(sensorCol, sensorRow);
+      if (newVelocity && !ce_suppress_send) {
         if (isStrummedSplit(sensorSplit)) {
           handleStrummedRowChange(true, 0);
         }
@@ -1679,6 +1695,11 @@ void handleTouchRelease() {
   if (sensorCell->pendingReleaseCount > 0) {
     return;
   }
+
+  // chord-mode dispatch (ls_chord_engine.ino) — note-off for our zones.
+  // Stock release continues afterward; its hasNote() guard is false for our
+  // cells (no prepareNewNote() was called for them), so no double note-off.
+  handleTouchRelease_zoneDispatch(sensorCol, sensorRow);
 
   // remember whether this cell was ignored
   boolean wasIgnored = (sensorCell->touched == ignoredCell);

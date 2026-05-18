@@ -664,6 +664,8 @@ struct SplitSettings {
   boolean mpe;                            // true when MPE is active for this split
   boolean sequencer;                      // true when the sequencer of this split is displayed
   SequencerView sequencerView;            // see SequencerView
+  boolean chordMode;                      // chord-engine: cells 1..8 act as chord grid when on
+  boolean chordTonicStrip;                // chord-engine: cells 9..16 rows 0..1 act as tonic strip when on
 };
 
 #define Split config.settings.split
@@ -777,6 +779,9 @@ struct GlobalSettings {
   signed char arpOctave;                     // the number of octaves that the arpeggiator has to operate over: 0, +1, or +2
   SustainBehavior sustainBehavior;           // the way the sustain pedal influences the notes
   boolean splitActive;                       // false = split off, true = split on
+  uint8_t chord_current_tonic_pc;            // chord-engine: persisted tonic pitch class (0..11)
+  uint8_t chord_voicing_mode;                // chord-engine: 0 = close position, 1 = parsimonious
+  uint8_t chord_voice_spread;                // chord-engine: 0 = tight, 1 = drop bass, 2 = spread bass+top
 };
 #define Global config.settings.global
 
@@ -1303,6 +1308,8 @@ void setup() {
   initializeSequencer();
 
   reset();
+
+  chordEngineInit();
 
   // set display to normal performance mode & refresh it
   clearDisplay();
