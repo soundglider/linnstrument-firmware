@@ -69,17 +69,15 @@ the same pitch range without compounding octave drops.
 
 ## Where to read more
 
-The chord-grid design lives in the parent repo's `docs/` tree (not in
-this firmware folder — the firmware folder mirrors upstream's structure
-so a real GitHub fork relationship can be maintained):
+The chord-grid design docs live in [`docs/`](docs/):
 
-| Doc            | What's in it                                                  |
-|----------------|---------------------------------------------------------------|
-| `LAYOUT.md`    | Physical layout: zones, cells, LED scheme, palette            |
-| `ARCHITECTURE.md` | Firmware structure: state, zone dispatch, touch lifecycles |
-| `VOCABULARY.md`| The 64-cell chord table (hand-authored C++ data)              |
-| `BUILD.md`     | Toolchain, build steps, flashing, reverting to stock          |
-| `ROADMAP.md`   | Phase ladder + implementation history                          |
+| Doc                                       | What's in it                                                  |
+|-------------------------------------------|---------------------------------------------------------------|
+| [`docs/LAYOUT.md`](docs/LAYOUT.md)        | Physical layout: zones, cells, LED scheme, palette            |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Firmware structure: state, zone dispatch, touch lifecycles |
+| [`docs/VOCABULARY.md`](docs/VOCABULARY.md)| The 64-cell chord table (hand-authored C++ data)              |
+| [`docs/BUILD.md`](docs/BUILD.md)          | Toolchain, build steps, flashing, reverting to stock          |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md)      | Phase ladder + implementation history                          |
 
 
 ## Where the chord-grid lives in this tree
