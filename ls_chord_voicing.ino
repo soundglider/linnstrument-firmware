@@ -134,48 +134,39 @@ uint8_t voice_lead(const uint8_t* prev_notes, uint8_t prev_count,
   return out_count;
 }
 
-// Post-process voicing to spread voices across a wider pitch range.
+// Post-process a close-position voicing to spread voices across a wider
+// pitch range. Should only be called on the *initial* voicing of a chord
+// (not on voice_lead's output) — applying it twice would drop voices
+// further on every chord change, drifting them out of range.
 //
-//   level 0 → no change (tight close-position or parsimonious)
-//   level 1 → drop the lowest voice by an octave IF it's currently at or above
-//             CHORD_BASE_OCTAVE*12 (so the bass sits in the octave below the
-//             chord cluster). The threshold prevents unbounded downward drift
-//             across long chord progressions in parsimonious mode — once the
-//             bass is already in the spread zone, subsequent chord changes
-//             leave it alone.
-//   level 2 → same as level 1, plus raise the highest voice by an octave if
-//             it's currently at or below (CHORD_BASE_OCTAVE+1)*12.
+//   level 0 → no change.
+//   level 1 → drop 2+4 voicing (jazz comping). Drop the 2nd-from-top and
+//             4th-from-top voices by an octave. For 3-voice chords this
+//             degenerates to just "drop 2" (middle voice dropped).
+//   level 2 → drop 2+4 AND raise the top voice by an octave (super-wide,
+//             ~2 octaves total span for 4-voice chords).
 //
-// Common-tone preservation: voices that are already in their spread position
-// stay put across chord changes (no retrigger). Only voices that *cross* the
-// threshold are octave-shifted, which costs at most a one-time retrigger.
+// Input must be sorted ascending (compute_chord_notes guarantees this since
+// intervals are ascending in the vocabulary). Output is re-sorted in place.
 void apply_spread(uint8_t* notes, uint8_t count, uint8_t level) {
   if (count < 2 || level == 0) return;
 
-  // Insertion-sort ascending (small N).
-  for (uint8_t i = 1; i < count; ++i) {
-    uint8_t v = notes[i];
-    int j = (int)i - 1;
-    while (j >= 0 && notes[j] > v) { notes[j+1] = notes[j]; --j; }
-    notes[j+1] = v;
-  }
-
-  const int bass_threshold = (int)CHORD_BASE_OCTAVE * 12;
-  const int top_threshold  = ((int)CHORD_BASE_OCTAVE + 1) * 12;
-
   if (level >= 1) {
-    if ((int)notes[0] >= bass_threshold && (int)notes[0] - 12 >= 0) {
-      notes[0] = (uint8_t)((int)notes[0] - 12);
+    if (count >= 4) {
+      // drop 2nd-from-top
+      if ((int)notes[count - 2] - 12 >= 0) notes[count - 2] -= 12;
+      // drop 4th-from-top
+      if ((int)notes[count - 4] - 12 >= 0) notes[count - 4] -= 12;
+    } else if (count == 3) {
+      // 3-voice fallback: drop the middle (= 2nd from top)
+      if ((int)notes[count - 2] - 12 >= 0) notes[count - 2] -= 12;
     }
   }
-  if (level >= 2 && count >= 3) {
-    uint8_t top = notes[count - 1];
-    if ((int)top <= top_threshold && (int)top + 12 <= 127) {
-      notes[count - 1] = (uint8_t)((int)top + 12);
-    }
+  if (level >= 2) {
+    if ((int)notes[count - 1] + 12 <= 127) notes[count - 1] += 12;
   }
 
-  // Re-sort in case the bass/top shift reordered voices.
+  // Re-sort ascending after the octave shifts.
   for (uint8_t i = 1; i < count; ++i) {
     uint8_t v = notes[i];
     int j = (int)i - 1;

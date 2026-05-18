@@ -107,19 +107,23 @@ void chordEngineHandleTouchOn(uint8_t col, uint8_t row, uint8_t velocity) {
                        && (chord_engine_state.held_note_count > 0);
 
   if (use_parsimonious) {
+    // Parsimonious: voice_lead from prev. The spread is *inherited* — prev
+    // was placed in spread form on the initial press, and voice_lead's
+    // nearest-PC assignment keeps voices near those positions. Re-applying
+    // apply_spread here would compound the octave drops and drift voices
+    // out of range over repeated chord changes.
     uint8_t target_pcs[MAX_CHORD_VOICES];
     uint8_t pc_count = compute_chord_pcs(tpl, chord_engine_state.current_tonic_pc, target_pcs);
     new_count = voice_lead(chord_engine_state.held_notes, chord_engine_state.held_note_count,
                            target_pcs, pc_count, new_notes);
   } else {
+    // Close-position mode OR first press in parsimonious mode. Compute the
+    // fresh close-position voicing and apply spread to set the baseline.
     new_count = compute_chord_notes(tpl, chord_engine_state.current_tonic_pc,
                                     CHORD_BASE_OCTAVE, new_notes);
+    apply_spread(new_notes, new_count, chord_engine_state.voice_spread);
   }
   if (new_count == 0) return;
-
-  // Voice-spread post-process (octave shifts for bass / top). Applied to
-  // both voicing modes so the user can spread wide regardless of leading.
-  apply_spread(new_notes, new_count, chord_engine_state.voice_spread);
 
   // Incremental transition: note-off departing voices, note-on new voices,
   // hold common ones. This is the common path for both voicing modes; it
