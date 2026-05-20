@@ -782,6 +782,8 @@ struct GlobalSettings {
   uint8_t chord_current_tonic_pc;            // chord-engine: persisted tonic pitch class (0..11)
   uint8_t chord_voicing_mode;                // chord-engine: 0 = close position, 1 = parsimonious
   uint8_t chord_voice_spread;                // chord-engine: 0 = tight, 1 = drop bass, 2 = spread bass+top
+  uint8_t chord_palette;                     // chord-engine: 0 = Pop, 1 = Jazz (see ChordPaletteId)
+  uint8_t chord_latch_mode;                  // chord-engine: 0 = off, 1 = held chord stays until next press / latch off
 };
 #define Global config.settings.global
 

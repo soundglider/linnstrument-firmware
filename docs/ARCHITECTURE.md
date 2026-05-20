@@ -61,8 +61,12 @@ struct ChordEngineState {
     int8_t   sounding_cell_col;      // -1 = none
     uint8_t  held_notes[MAX_CHORD_VOICES];
     uint8_t  held_note_count;        // 0..7
+    uint8_t  last_voicing[MAX_CHORD_VOICES];  // survives release; voice-lead reference
+    uint8_t  last_voicing_count;     // 0 = no prior voicing (first press after reset)
     uint8_t  voicing_mode;           // 0 = close, 1 = parsimonious
     uint8_t  voice_spread;           // 0 = tight, 1 = drop-2+4, 2 = wider
+    uint8_t  chord_palette;          // ChordPaletteId: 0 = Pop, 1 = Jazz
+    uint8_t  latch_mode;             // 0 = release on touch off, 1 = hold until next press / latch off
     uint8_t  melody_layout_mode;     // unused — melody is stock-delegated
 };
 
@@ -81,7 +85,7 @@ boolean chordTonicStrip;   // tonic strip for cols 9..16 rows 0..1 when on
 ```
 
 The **persisted chord-engine parameters** (tonic PC, voicing mode, voice
-spread) live in `GlobalSettings` alongside other global config. They are
+spread, chord palette) live in `GlobalSettings` alongside other global config. They are
 synced into `chord_engine_state` in `applyPresetSettings` so loading a
 preset reapplies them. The chord engine does **not** auto-save; the user
 explicitly committing a preset (via stock's preset UI) is what writes
@@ -156,12 +160,12 @@ this is the seam where the engine could be tested off-target if needed.
 
 | Function                                                                | Returns                       |
 |-------------------------------------------------------------------------|-------------------------------|
-| `chord_template_for_cell(row, col)`                                     | `const ChordTemplate*` (nullptr for empty cells) |
+| `chord_template_for_cell(palette, row, col)`                            | `const ChordTemplate*` (nullptr for empty cells) |
 | `compute_chord_notes(template, tonic_pc, base_octave, out_notes[])`     | note count (close position)   |
 | `compute_chord_pcs(template, tonic_pc, out_pcs[])`                      | pitch-class count             |
 | `voice_lead(prev_notes[], prev_count, target_pcs[], pc_count, out[])`   | note count (parsimonious)     |
 | `apply_spread(notes[], count, level)`                                   | in-place octave shifts        |
-| `function_color(function_id)`                                           | palette index                 |
+| `chord_cell_color(row, local_col)`                                      | palette index (palette-agnostic) |
 | `isChordEngineZone(col, row)`                                           | boolean                       |
 
 State mutation happens only inside the zone handlers (`chordEngineHandleTouchOn/Off`
@@ -173,15 +177,30 @@ and `tonicStripHandleTouchOn`); everything else is read-only.
 
 **Press — `chordEngineHandleTouchOn(local_col, row, vel)`:**
 
-1. Resolve `tpl = chord_template_for_cell(row, local_col)`. If null (empty
-   cell, e.g. vii° col 7), return.
-2. Decide voicing strategy:
-   - If `voicing_mode == 1` *and* `held_note_count > 0` → parsimonious:
-     `voice_lead(held_notes, target_pcs, ...)` voice-leads from the
-     currently-held chord to the new chord's pitch classes. The spread
-     is *inherited* from prev — no re-application.
+1. Resolve `tpl = chord_template_for_cell(chord_palette, row, local_col)`.
+   If null (empty cell, e.g. vii° col 7), return.
+2. Pick the `prev` reference for voice-leading:
+   - `held_note_count > 0` → use `held_notes` (hold-and-switch).
+   - Else if `last_voicing_count > 0` → use `last_voicing` (single-press
+     pattern: voice-leading survives release so I → V → vi typed one at a
+     time still voice-leads, instead of resetting to root-position close
+     each press).
+   - Else → no prev (first press after a reset event).
+3. Decide voicing strategy:
+   - If `voicing_mode == 1` and prev exists → parsimonious:
+     `voice_lead(prev_notes, prev_count, target_pcs, ...)`. Spread is
+     *inherited* from prev — no re-application.
    - Otherwise → close position: `compute_chord_notes(tpl, ...)` then
      `apply_spread(...)` bakes in the spread shape on this fresh press.
+
+`voice_lead` itself branches on the prev/target count ratio:
+- `prev_count == 0` → first-press fallback, stack from `CHORD_BASE_OCTAVE`.
+- `prev_count > pc_count` (contracting, e.g. Imaj9 → V triad) →
+  **target-driven** matching: each target picks its nearest unclaimed prev
+  voice. Preserves common tones in upper prev voices when downsizing.
+- `prev_count <= pc_count` (same / expanding) → **prev-driven** matching:
+  each prev voice picks nearest target; unmatched targets are placed near
+  the centroid of assigned voices.
 3. **Incremental transition**: diff old `held_notes[]` against new notes.
    - Notes only in old → send `note_off`.
    - Notes only in new → send `note_on`.
@@ -211,14 +230,21 @@ chord layering is deferred to Phase 11.
    chord doesn't ring at the wrong key during the transition).
 3. Update `chord_engine_state.current_tonic_pc` *and*
    `Global.chord_current_tonic_pc` (the latter lets a subsequent stock
-   preset save persist the tonic).
+   preset save persist the tonic). **Resets `last_voicing_count = 0`** so
+   the next chord starts fresh from the base octave instead of voice-
+   leading from a voicing keyed to the old tonic.
 4. Repaint the tonic strip (move the white highlight).
 
 **Reserved cell bindings (row 1):**
 
 - `local_col == 4` (sensorCol 13) → toggle `voicing_mode` (close ↔ parsimonious).
-- `local_col == 5` (sensorCol 14) → cycle `voice_spread` (0 → 1 → 2 → 0).
-- `local_col == 6, 7` → unbound (reserved for future).
+- `local_col == 5` (sensorCol 14) → cycle `voice_spread` (0 → 1 → 2 → 0). Re-voices the currently-sounding chord from close position + new spread via `chordEngineRevoiceCurrent` (diffed against `held_notes` for clean note-on/off) and updates `last_voicing` to the new shape; if no chord is sounding, clears `last_voicing_count` so the next press starts fresh.
+- `local_col == 6` (sensorCol 15) → cycle `chord_palette` (Pop → Jazz → Pop). Releases any held chord first **and** resets `last_voicing_count` (fresh palette = fresh voicing baseline).
+- `local_col == 7` (sensorCol 16) → toggle `latch_mode`. When on, `chordEngineHandleTouchOff` skips the release so the chord keeps ringing; `chordEngineHandleTouchOn` emits notes at constant velocity `CHORD_LATCH_VELOCITY = 100`; re-pressing the currently-sounding cell forces a full retrigger (skips common-tone optimization for that press). Turning latch off releases the currently-sounding chord.
+
+**Reset events for `last_voicing`:** `chordEngineInit` (boot), tonic
+change, palette change, and preset load (`applyPresetSettings`). Everything
+else preserves the voicing memory, so release-then-press still voice-leads.
 
 The tonic strip's release handler is a v1 no-op.
 
@@ -295,7 +321,7 @@ The chord-engine fields live in stock-managed settings structures:
 
 - `SplitSettings`: `chordMode`, `chordTonicStrip` (per split).
 - `GlobalSettings`: `chord_current_tonic_pc`, `chord_voicing_mode`,
-  `chord_voice_spread`.
+  `chord_voice_spread`, `chord_palette`, `chord_latch_mode`.
 
 They get loaded at boot via stock's `loadSettings` → `applyConfiguration`
 → `applyPresetSettings`, where the chord-engine sync copies the loaded

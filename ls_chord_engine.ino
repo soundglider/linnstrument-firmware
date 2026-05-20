@@ -49,7 +49,10 @@ void chordEngineInit() {
   chord_engine_state.sounding_cell_row = -1;
   chord_engine_state.sounding_cell_col = -1;
   chord_engine_state.held_note_count = 0;
+  chord_engine_state.last_voicing_count = 0;
   chord_engine_state.voicing_mode = 0;
+  chord_engine_state.chord_palette = 0;
+  chord_engine_state.latch_mode = 0;
   chord_engine_state.melody_layout_mode = 0;
   for (uint8_t i = 0; i < MAX_CHORD_VOICES; ++i) {
     chord_engine_state.held_notes[i] = 0;
@@ -97,14 +100,34 @@ void chordEngineHandleTouchOn(uint8_t col, uint8_t row, uint8_t velocity) {
     Serial.print(" vel=");Serial.println((int)velocity);
   }
 
-  const ChordTemplate* tpl = chord_template_for_cell(row, col);
+  const ChordTemplate* tpl = chord_template_for_cell(chord_engine_state.chord_palette, row, col);
+  if (Device.serialMode) {
+    Serial.print("  palette=");Serial.print((int)chord_engine_state.chord_palette);
+    Serial.print(" tpl=");Serial.println(tpl == nullptr ? "(null)" : tpl->name);
+  }
   if (tpl == nullptr) return;
 
   uint8_t new_notes[MAX_CHORD_VOICES];
   uint8_t new_count;
 
-  bool use_parsimonious = (chord_engine_state.voicing_mode == 1)
-                       && (chord_engine_state.held_note_count > 0);
+  // Pick the prev voicing for parsimonious mode: held_notes wins when the user
+  // is hold-and-switching, last_voicing is the fallback after a release so
+  // single-press-then-release-then-press sequences (I → V → vi typed one at a
+  // time) still voice-lead instead of resetting to root-position close every
+  // press. Reset events (init, tonic change, palette change, preset load)
+  // clear last_voicing_count so the first chord after a reset always starts
+  // fresh from CHORD_BASE_OCTAVE.
+  const uint8_t* prev_notes;
+  uint8_t prev_count;
+  if (chord_engine_state.held_note_count > 0) {
+    prev_notes = chord_engine_state.held_notes;
+    prev_count = chord_engine_state.held_note_count;
+  } else {
+    prev_notes = chord_engine_state.last_voicing;
+    prev_count = chord_engine_state.last_voicing_count;
+  }
+
+  bool use_parsimonious = (chord_engine_state.voicing_mode == 1) && (prev_count > 0);
 
   if (use_parsimonious) {
     // Parsimonious: voice_lead from prev. The spread is *inherited* — prev
@@ -114,20 +137,92 @@ void chordEngineHandleTouchOn(uint8_t col, uint8_t row, uint8_t velocity) {
     // out of range over repeated chord changes.
     uint8_t target_pcs[MAX_CHORD_VOICES];
     uint8_t pc_count = compute_chord_pcs(tpl, chord_engine_state.current_tonic_pc, target_pcs);
-    new_count = voice_lead(chord_engine_state.held_notes, chord_engine_state.held_note_count,
-                           target_pcs, pc_count, new_notes);
+    new_count = voice_lead(prev_notes, prev_count, target_pcs, pc_count, new_notes);
   } else {
-    // Close-position mode OR first press in parsimonious mode. Compute the
-    // fresh close-position voicing and apply spread to set the baseline.
+    // Close-position mode OR first press after reset. Compute the fresh
+    // close-position voicing and apply spread to set the baseline.
     new_count = compute_chord_notes(tpl, chord_engine_state.current_tonic_pc,
                                     CHORD_BASE_OCTAVE, new_notes);
     apply_spread(new_notes, new_count, chord_engine_state.voice_spread);
   }
   if (new_count == 0) return;
 
+  // Same-cell re-press in latch mode → retrigger: skip the common-tone
+  // optimization so every voice gets a fresh note-off + note-on, even when
+  // the new voicing is identical to the held one.
+  bool force_retrigger = chord_engine_state.latch_mode
+                      && chord_engine_state.sounding_cell_row == (int8_t)row
+                      && chord_engine_state.sounding_cell_col == (int8_t)col;
+
   // Incremental transition: note-off departing voices, note-on new voices,
   // hold common ones. This is the common path for both voicing modes; it
   // makes close-position smooth-when-it-can and parsimonious explicit.
+  for (uint8_t i = 0; i < chord_engine_state.held_note_count; ++i) {
+    boolean keep = false;
+    if (!force_retrigger) {
+      for (uint8_t j = 0; j < new_count; ++j) {
+        if (chord_engine_state.held_notes[i] == new_notes[j]) { keep = true; break; }
+      }
+    }
+    if (!keep) {
+      midiSendNoteOff(LEFT, chord_engine_state.held_notes[i], CHORD_CHANNEL);
+      midiSendNoteOffRaw(chord_engine_state.held_notes[i], 0x40, CHORD_CHANNEL - 1);
+    }
+  }
+  byte emit_velocity = chord_engine_state.latch_mode ? CHORD_LATCH_VELOCITY : velocity;
+  for (uint8_t i = 0; i < new_count; ++i) {
+    boolean was_held = false;
+    if (!force_retrigger) {
+      for (uint8_t j = 0; j < chord_engine_state.held_note_count; ++j) {
+        if (new_notes[i] == chord_engine_state.held_notes[j]) { was_held = true; break; }
+      }
+    }
+    if (!was_held) {
+      midiSendNoteOn(LEFT, new_notes[i], emit_velocity, CHORD_CHANNEL);
+    }
+  }
+
+  // Move the white sounding-cell highlight to the new cell.
+  if (chord_engine_state.sounding_cell_row != -1) {
+    byte sCol = chord_engine_state.sounding_cell_col + 1;
+    byte sRow = chord_engine_state.sounding_cell_row;
+    clearLed(sCol, sRow, LED_LAYER_PLAYED);
+  }
+
+  for (uint8_t i = 0; i < new_count; ++i) chord_engine_state.held_notes[i] = new_notes[i];
+  chord_engine_state.held_note_count = new_count;
+  chord_engine_state.sounding_cell_row = row;
+  chord_engine_state.sounding_cell_col = col;
+
+  // Stash for the next press's voice-leading reference — survives release.
+  for (uint8_t i = 0; i < new_count; ++i) chord_engine_state.last_voicing[i] = new_notes[i];
+  chord_engine_state.last_voicing_count = new_count;
+
+  // Fast-pulsing white highlight on LED_LAYER_PLAYED, composited on the
+  // function color in LED_LAYER_MAIN. Cleared on release.
+  setLed(col + 1, row, COLOR_WHITE, cellFastPulse, LED_LAYER_PLAYED);
+}
+
+// Recompute the currently-sounding cell's voicing using the current spread
+// setting, and diff against held_notes for clean note-on/note-off.
+// Always starts from close position (ignores prev voice-leading state) so the
+// voice positions reflect the new spread shape rather than inheriting the old
+// one — used when the user cycles spread mid-chord. Caller is responsible for
+// the no-sounding-cell case (where last_voicing should be cleared instead).
+void chordEngineRevoiceCurrent() {
+  if (chord_engine_state.sounding_cell_row == -1) return;
+
+  uint8_t row = chord_engine_state.sounding_cell_row;
+  uint8_t col = chord_engine_state.sounding_cell_col;
+  const ChordTemplate* tpl = chord_template_for_cell(chord_engine_state.chord_palette, row, col);
+  if (tpl == nullptr) return;
+
+  uint8_t new_notes[MAX_CHORD_VOICES];
+  uint8_t new_count = compute_chord_notes(tpl, chord_engine_state.current_tonic_pc,
+                                          CHORD_BASE_OCTAVE, new_notes);
+  apply_spread(new_notes, new_count, chord_engine_state.voice_spread);
+  if (new_count == 0) return;
+
   for (uint8_t i = 0; i < chord_engine_state.held_note_count; ++i) {
     boolean keep = false;
     for (uint8_t j = 0; j < new_count; ++j) {
@@ -144,25 +239,14 @@ void chordEngineHandleTouchOn(uint8_t col, uint8_t row, uint8_t velocity) {
       if (new_notes[i] == chord_engine_state.held_notes[j]) { was_held = true; break; }
     }
     if (!was_held) {
-      midiSendNoteOn(LEFT, new_notes[i], velocity, CHORD_CHANNEL);
+      midiSendNoteOn(LEFT, new_notes[i], CHORD_LATCH_VELOCITY, CHORD_CHANNEL);
     }
-  }
-
-  // Move the white sounding-cell highlight to the new cell.
-  if (chord_engine_state.sounding_cell_row != -1) {
-    byte sCol = chord_engine_state.sounding_cell_col + 1;
-    byte sRow = chord_engine_state.sounding_cell_row;
-    clearLed(sCol, sRow, LED_LAYER_PLAYED);
   }
 
   for (uint8_t i = 0; i < new_count; ++i) chord_engine_state.held_notes[i] = new_notes[i];
   chord_engine_state.held_note_count = new_count;
-  chord_engine_state.sounding_cell_row = row;
-  chord_engine_state.sounding_cell_col = col;
-
-  // Fast-pulsing white highlight on LED_LAYER_PLAYED, composited on the
-  // function color in LED_LAYER_MAIN. Cleared on release.
-  setLed(col + 1, row, COLOR_WHITE, cellFastPulse, LED_LAYER_PLAYED);
+  for (uint8_t i = 0; i < new_count; ++i) chord_engine_state.last_voicing[i] = new_notes[i];
+  chord_engine_state.last_voicing_count = new_count;
 }
 
 void chordEngineHandleTouchOff(uint8_t col, uint8_t row) {
@@ -176,6 +260,9 @@ void chordEngineHandleTouchOff(uint8_t col, uint8_t row) {
     // an older cell whose release came in after a newer chord took over
     return;
   }
+  // Latch: keep the chord sounding past the touch release. The next chord-cell
+  // press will diff/transition off this state; toggling latch off releases it.
+  if (chord_engine_state.latch_mode) return;
   chordEngineReleaseHeldChord();
 }
 
@@ -188,9 +275,12 @@ void chordEngineHandleTouchOff(uint8_t col, uint8_t row) {
 // Row 1 cols 4..7 are sentinel (0xFF) in tonic_cell_to_pc. Bound actions:
 //   row 1 col 4 → toggle voicing mode (close ↔ parsimonious)
 //   row 1 col 5 → cycle voice spread (tight → drop bass → spread → tight)
-//   row 1 cols 6..7 → unbound (reserved for future)
+//   row 1 col 6 → cycle chord palette (Pop → Jazz → Pop)
+//   row 1 col 7 → toggle latch mode (off → hold-until-next-or-disabled → off)
 #define TONIC_RESERVED_VOICING_COL  4
 #define TONIC_RESERVED_SPREAD_COL   5
+#define TONIC_RESERVED_PALETTE_COL  6
+#define TONIC_RESERVED_LATCH_COL    7
 
 void tonicStripHandleTouchOn(uint8_t local_col, uint8_t local_row) {
   if (local_row >= 2 || local_col >= 8) return;
@@ -205,6 +295,39 @@ void tonicStripHandleTouchOn(uint8_t local_col, uint8_t local_row) {
     } else if (local_row == 1 && local_col == TONIC_RESERVED_SPREAD_COL) {
       chord_engine_state.voice_spread = (chord_engine_state.voice_spread + 1) % 3;
       Global.chord_voice_spread = chord_engine_state.voice_spread;
+      // Re-voice the currently-sounding chord with the new spread so the voice
+      // positions reflect the new shape, and parsimonious voice-leading from
+      // here forward starts from the new baseline instead of inheriting the
+      // old spread. If nothing is sounding, just drop last_voicing so the next
+      // press starts fresh from close + new spread.
+      if (chord_engine_state.sounding_cell_row != -1) {
+        chordEngineRevoiceCurrent();
+      } else {
+        chord_engine_state.last_voicing_count = 0;
+      }
+      tonic_strip_repaint();
+    } else if (local_row == 1 && local_col == TONIC_RESERVED_PALETTE_COL) {
+      // Release any held chord — switching palette mid-hold would leave the
+      // sounding voices keyed off a template that no longer matches the cell.
+      if (chord_engine_state.sounding_cell_row != -1) {
+        chordEngineReleaseHeldChord();
+      }
+      chord_engine_state.chord_palette = (chord_engine_state.chord_palette + 1) % CHORD_PALETTE_COUNT;
+      Global.chord_palette = chord_engine_state.chord_palette;
+      // Fresh palette = fresh start; don't voice-lead from the previous palette's voicing.
+      chord_engine_state.last_voicing_count = 0;
+      tonic_strip_repaint();
+    } else if (local_row == 1 && local_col == TONIC_RESERVED_LATCH_COL) {
+      if (chord_engine_state.latch_mode) {
+        // Turning latch off: release any currently-sounding (latched) chord.
+        if (chord_engine_state.sounding_cell_row != -1) {
+          chordEngineReleaseHeldChord();
+        }
+        chord_engine_state.latch_mode = 0;
+      } else {
+        chord_engine_state.latch_mode = 1;
+      }
+      Global.chord_latch_mode = chord_engine_state.latch_mode;
       tonic_strip_repaint();
     }
     return;
@@ -218,6 +341,10 @@ void tonicStripHandleTouchOn(uint8_t local_col, uint8_t local_row) {
 
   chord_engine_state.current_tonic_pc = new_pc;
   Global.chord_current_tonic_pc = new_pc;
+  // Fresh key = fresh start; voice-leading from a voicing in the old key
+  // would project the old voices onto the new tonic's PCs and produce surprising
+  // inversions.
+  chord_engine_state.last_voicing_count = 0;
 
   if (Device.serialMode) {
     Serial.print("tonic = pc ");Serial.println((int)new_pc);

@@ -322,6 +322,10 @@ void applyPresetSettings() {
   chord_engine_state.current_tonic_pc = Global.chord_current_tonic_pc;
   chord_engine_state.voicing_mode     = Global.chord_voicing_mode;
   chord_engine_state.voice_spread     = Global.chord_voice_spread;
+  chord_engine_state.chord_palette    = Global.chord_palette;
+  chord_engine_state.latch_mode       = Global.chord_latch_mode;
+  // Voicing memory is RAM-only; clear it on preset load so the next chord starts fresh.
+  chord_engine_state.last_voicing_count = 0;
   tonic_strip_repaint();
 }
 
@@ -355,7 +359,7 @@ void storeSettingsToPreset(byte p) {
 // The first time after new code is loaded into the Linnstrument, this sets the initial defaults of all settings.
 // On subsequent startups, these values are overwritten by loading the settings stored in flash.
 void initializeDeviceSettings() {
-  Device.version = 21;  // bumped from 20: GlobalSettings gained chord_voice_spread
+  Device.version = 23;  // bumped from 22: GlobalSettings gained chord_latch_mode
   Device.serialMode = false;
   Device.sleepAnimationActive = false;
   Device.sleepActive = false;
@@ -625,6 +629,8 @@ void initializePresetSettings() {
     g.chord_current_tonic_pc = 0;  // chord-engine: default tonic C
     g.chord_voicing_mode = 0;      // chord-engine: default close-position voicing
     g.chord_voice_spread = 0;      // chord-engine: default tight voice spacing
+    g.chord_palette = 0;           // chord-engine: default Pop palette
+    g.chord_latch_mode = 0;        // chord-engine: default latch off (release on touch off)
 
     // initialize all identical values in the keyboard split data
     for (byte s = 0; s < NUMSPLITS; ++s) {

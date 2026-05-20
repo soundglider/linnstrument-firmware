@@ -20,6 +20,8 @@ See docs/ARCHITECTURE.md §Configuration constants.
 
 #define MAX_CHORD_VOICES          7
 
+#define CHORD_LATCH_VELOCITY      100   // constant velocity for note-on while latch is on
+
 #define EEPROM_TONIC_DEBOUNCE_MS  3000
 
 #include <stdint.h>
@@ -38,8 +40,12 @@ struct ChordEngineState {
   int8_t   sounding_cell_col;
   uint8_t  held_notes[MAX_CHORD_VOICES];
   uint8_t  held_note_count;
+  uint8_t  last_voicing[MAX_CHORD_VOICES];  // last emitted voicing, survives release
+  uint8_t  last_voicing_count;              // 0 = no prior voicing (first press after reset)
   uint8_t  voicing_mode;
   uint8_t  voice_spread;       // 0 = tight, 1 = drop bass, 2 = spread bass + top
+  uint8_t  chord_palette;      // ChordPaletteId; 0 = Pop, 1 = Jazz
+  uint8_t  latch_mode;         // 0 = release-on-touch-off, 1 = hold until next press / latch off
   uint8_t  melody_layout_mode;
 };
 

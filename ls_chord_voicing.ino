@@ -53,10 +53,15 @@ uint8_t compute_chord_pcs(const ChordTemplate* tpl,
   return n;
 }
 
-// Greedy parsimonious voice-leading. For each previous note (low → high), pick
-// the unclaimed target PC nearest in semitones (within ±6) and emit a note at
-// that distance. Unclaimed target PCs are placed near the centroid of the
-// already-assigned voices.
+// Greedy parsimonious voice-leading. Two cases:
+//   - prev_count <= pc_count (same / expand): for each previous note (low → high),
+//     pick the unclaimed target PC nearest in semitones (within ±6) and emit a
+//     note at that distance. Unclaimed target PCs are placed near the centroid
+//     of the already-assigned voices.
+//   - prev_count > pc_count (contract): iterate *targets* in vocab order; each
+//     target picks its nearest unclaimed prev voice. This preserves upper
+//     common tones when downsizing (e.g. Imaj9 → V triad keeps G/B/D in place
+//     instead of dropping the upper two voices and re-voicing low).
 uint8_t voice_lead(const uint8_t* prev_notes, uint8_t prev_count,
                    const uint8_t* target_pcs, uint8_t pc_count,
                    uint8_t out_notes[MAX_CHORD_VOICES]) {
@@ -77,13 +82,50 @@ uint8_t voice_lead(const uint8_t* prev_notes, uint8_t prev_count,
     return out_count;
   }
 
+  // Contract case: target-driven matching, no centroid placement needed
+  // (every target gets a prev voice since prev_count > pc_count).
+  if (prev_count > pc_count) {
+    boolean used_prev[MAX_CHORD_VOICES];
+    for (uint8_t i = 0; i < MAX_CHORD_VOICES; ++i) used_prev[i] = false;
+
+    uint8_t out_count = 0;
+    for (uint8_t j = 0; j < pc_count; ++j) {
+      int target_pc = (int)target_pcs[j];
+
+      int best_dist = 99;
+      int best_idx = -1;
+      int best_note = 0;
+
+      for (uint8_t i = 0; i < prev_count; ++i) {
+        if (used_prev[i]) continue;
+        int prev_pc = (((int)prev_notes[i] % 12) + 12) % 12;
+        int diff = target_pc - prev_pc;
+        if (diff > 6) diff -= 12;
+        if (diff < -6) diff += 12;
+        int dist = (diff < 0) ? -diff : diff;
+        if (dist < best_dist) {
+          best_dist = dist;
+          best_idx = i;
+          best_note = (int)prev_notes[i] + diff;
+        }
+      }
+
+      if (best_idx < 0) break;
+      used_prev[best_idx] = true;
+      if (best_note < 0)   best_note = 0;
+      if (best_note > 127) best_note = 127;
+      out_notes[out_count++] = (uint8_t)best_note;
+    }
+    return out_count;
+  }
+
+  // Same-count or expand case: prev-driven matching.
   boolean used[MAX_CHORD_VOICES];
   for (uint8_t i = 0; i < MAX_CHORD_VOICES; ++i) used[i] = false;
 
   uint8_t out_count = 0;
-  uint8_t assign_limit = (prev_count < pc_count) ? prev_count : pc_count;
 
-  for (uint8_t i = 0; i < assign_limit; ++i) {
+  for (uint8_t i = 0; i < prev_count; ++i) {
     int prev_note = (int)prev_notes[i];
     int prev_pc = ((prev_note % 12) + 12) % 12;
 
@@ -141,10 +183,14 @@ uint8_t voice_lead(const uint8_t* prev_notes, uint8_t prev_count,
 //
 //   level 0 → no change.
 //   level 1 → drop 2+4 voicing (jazz comping). Drop the 2nd-from-top and
-//             4th-from-top voices by an octave. For 3-voice chords this
-//             degenerates to just "drop 2" (middle voice dropped).
+//             4th-from-top voices by an octave. For 3-voice triads this
+//             degenerates to "drop the bass" (root dropped an octave for an
+//             open-triad spread); inner voices are already minimal at 3
+//             notes, so dropping the bass is what produces a meaningful
+//             spread without inverting the chord.
 //   level 2 → drop 2+4 AND raise the top voice by an octave (super-wide,
-//             ~2 octaves total span for 4-voice chords).
+//             ~2 octaves total span for 4-voice chords). On triads this
+//             stacks atop the dropped bass, spanning two octaves.
 //
 // Input must be sorted ascending (compute_chord_notes guarantees this since
 // intervals are ascending in the vocabulary). Output is re-sorted in place.
@@ -158,8 +204,11 @@ void apply_spread(uint8_t* notes, uint8_t count, uint8_t level) {
       // drop 4th-from-top
       if ((int)notes[count - 4] - 12 >= 0) notes[count - 4] -= 12;
     } else if (count == 3) {
-      // 3-voice fallback: drop the middle (= 2nd from top)
-      if ((int)notes[count - 2] - 12 >= 0) notes[count - 2] -= 12;
+      // 3-voice fallback: drop the bass (root) by an octave for an open-
+      // triad spread. Dropping the middle would invert the chord against
+      // the bass; dropping the root keeps the chord shape and just widens
+      // the bottom interval.
+      if ((int)notes[0] - 12 >= 0) notes[0] -= 12;
     }
   }
   if (level >= 2) {

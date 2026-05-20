@@ -92,9 +92,10 @@ col + 9):
   - Row 0, local cols 0..7 → C, C#, D, D#, E, F, F#, G
   - Row 1, local cols 0..3 → G#, A, A#, B
 - 4 reserved cells (row 1, local cols 4..7):
-  - **Local col 4** (sensorCol 13) → **voicing mode toggle** (close ↔ parsimonious).
-  - **Local col 5** (sensorCol 14) → **voice spread cycle** (tight → drop-2+4 → wider → tight).
-  - Local cols 6, 7 (sensorCol 15, 16) → unbound, reserved for future.
+  - **Local col 4** (sensorCol 13) → **voicing mode toggle** (close ↔ parsimonious). Lit orange when parsimonious.
+  - **Local col 5** (sensorCol 14) → **voice spread cycle** (tight → drop-2+4 → wider → tight). Lit lime at level 1, yellow at level 2. Cycling re-voices the currently-sounding chord with the new spread (audible transition) and resets the voice-leading baseline so subsequent parsimonious chords lead from the new shape instead of inheriting the old one.
+  - **Local col 6** (sensorCol 15) → **chord palette cycle** (Pop → Jazz → Pop). Lit blue for Pop, pink for Jazz. Pressing also releases any held chord (templates differ between palettes).
+  - **Local col 7** (sensorCol 16) → **latch toggle**. Lit red when on. While latched: chord-cell release no longer sends note-off (the chord keeps ringing), note-on uses a constant velocity of 100, the next chord-cell press does the normal note-off-old / note-on-new diff, and **re-pressing the same chord cell retriggers** (full note-off / note-on, no common-tone hold). Toggling latch off releases the currently-latched chord.
 
 Pressing a tonic-PC cell:
 1. Releases any currently-held chord (avoids mid-chord re-key click).

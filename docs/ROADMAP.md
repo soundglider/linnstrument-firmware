@@ -115,8 +115,8 @@ between close-position (0) and parsimonious (1). LED feedback:
 `COLOR_ORANGE` when on.
 
 **Extra beyond original spec:** `apply_spread` adds a drop-2+4 jazz-
-comping post-process with three levels (0 = tight, 1 = drop-2+4 / drop-2
-for 3-voice, 2 = drop-2+4 + raise top). Bound at sensorCol 14 row 1;
+comping post-process with three levels (0 = tight, 1 = drop-2+4 / drop
+the bass for 3-voice triads, 2 = drop-2+4 + raise top). Bound at sensorCol 14 row 1;
 cycles through the three levels. LED feedback: off / `COLOR_LIME` /
 `COLOR_YELLOW`.
 

@@ -25,16 +25,24 @@ A per-split toggle (configured in **Per-Split Settings**) turns each of
 the LinnStrument's two splits into one of these layouts:
 
 - **Chord grid** (8 cols × 8 rows). Each row is one scale-degree role —
-  I, ii, iii, IV, V, vi, vii°, bVII. Each column within a row is a
-  tension level — leftmost is the bare triad / most resolved shape,
-  rightmost is the most extended / colored version. Press a cell to
-  sound that chord. 64 hand-authored chord templates in total.
+  I, ii, iii, IV, V, vi, vii°, bVII. Columns follow a role-locked scheme:
+  col 1 = triad, col 2 = sus, col 3 = 7th chord, cols 4-7 add function-
+  aware extensions, col 8 = altered wildcard. Press a cell to sound that
+  chord. 64 hand-authored chord templates per palette.
 
 - **Tonic strip** (8 cols × 2 rows). The 12 chromatic pitch classes are
   laid out as a tonic selector; pressing one re-keys the chord grid live.
   Four reserved cells bind to: **voicing mode** (close-position ↔
-  parsimonious), **voice spread** (tight / drop-2+4 / wide); the other
-  two are unbound.
+  parsimonious), **voice spread** (tight / drop-2+4 / wide), **chord
+  palette** (Pop ↔ Jazz), and **latch** (on/off — when on, a chord cell
+  release no longer sends note-off; the chord keeps ringing until the
+  next chord-cell press or until latch is toggled off).
+
+Two chord palettes ship in firmware: **Pop** (default, friendly diatonic
+voicings) and **Jazz** (sus4 over sus2, 7-stacked extensions, maj13 /
+m11 / m(maj7) / lydian-dominant wildcards). The column scheme is the same
+in both — switching palette swaps the specific voicings without changing
+which column holds the sus / 7 / extension.
 
 A split with neither toggle enabled behaves exactly like stock — same
 note resolution, same note-lights, same per-split MIDI channel and
@@ -55,10 +63,14 @@ Two voicing modes (toggled at the voicing reserved cell):
 - **Close position** — the chord template's intervals stacked above
   `CHORD_BASE_OCTAVE` + tonic. Each chord press starts fresh; common tones
   between chords are not deliberately preserved.
-- **Parsimonious** — `voice_lead` assigns each previously-held voice to
-  the nearest target pitch class within ±6 semitones; common tones (same
+- **Parsimonious** — `voice_lead` matches the previous chord's voices to
+  the new chord's pitch classes within ±6 semitones; common tones (same
   MIDI value) are held without retrigger. Voices move minimally between
-  chord changes.
+  chord changes. The previous voicing **survives release**, so playing
+  chords one at a time (release before next press) still voice-leads —
+  reset only on tonic change, palette change, or preset load. When the
+  new chord has fewer voices than the previous one (e.g. Imaj9 → V
+  triad), upper common tones are preserved instead of dropped.
 
 A separate **voice spread** parameter (3 levels at the spread reserved
 cell) applies a drop-2+4 jazz-comping post-process to the *initial*
